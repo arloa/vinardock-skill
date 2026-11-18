@@ -1,6 +1,6 @@
 # Interview
 
-Follow this when SKILL.md step 2 routes here. Collect everything in ONE
+Follow this when vinardock-skill.md step 2 routes here. Collect everything in ONE
 question pass — scripts never ask questions.
 
 ## Questions

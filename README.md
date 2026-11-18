@@ -2,7 +2,7 @@
 
 Vinardock molecular docking pipeline (prepare → dock → analyse)
 packaged as an [Agent Skills](https://agentskills.io)-format skill: a
-`SKILL.md` instruction file plus the Python scripts and reference docs
+`vinardock-skill.md` instruction file plus the Python scripts and reference docs
 the agent needs to coordinate the run.
 
 ## Requirements
@@ -37,6 +37,10 @@ This skill-directory placement is the only thing that lives outside the
 repo; `scripts/setup.py install` writes only to `<repo>/.tools/`
 (gitignored) and never touches your home directory or PATH.
 
+Agent Skills loaders discover a file named `SKILL.md`; if yours does,
+rename or symlink `vinardock-skill.md` to `SKILL.md` in the installed
+skill directory.
+
 ## Usage
 
 Ask the agent to dock a receptor against one or more ligands (`.pdb`,
@@ -45,7 +49,7 @@ inputs, box, recipe and run directory, then runs
 `scripts/pipeline.py workflow`, which gates each stage on its
 `status.json` and writes `<run_dir>/report.md`. Every interview answer
 maps to a flag, so a non-interactive agent can supply them all; see
-`SKILL.md` and `references/contract.md` for the invocation and the
+`vinardock-skill.md` and `references/contract.md` for the invocation and the
 validation rules.
 
 ## Development

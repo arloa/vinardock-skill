@@ -16,7 +16,7 @@ Hard rules:
 - Never invent docking parameters. Every flag value comes from a recipe
   file, user input, or a script default; if a protocol has no recipe,
   ask.
-- Resolve `<skill_dir>` as the parent of this SKILL.md, invoke scripts
+- Resolve `<skill_dir>` as the parent of this vinardock-skill.md, invoke scripts
   with absolute paths, and keep the user's working directory.
 - Never hand-edit files inside a run dir's `prep/`, `dock/`,
   `analysis/` — stage code owns them.
