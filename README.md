@@ -1,4 +1,4 @@
-# vinardock — Agent Skill
+# vinardock-skill — Agent Skill
 
 Vinardock molecular docking pipeline (prepare → dock → analyse)
 packaged as an [Agent Skills](https://agentskills.io)-format skill: a
@@ -22,15 +22,15 @@ Copy or symlink this directory into your agent's skills folder:
 
 | Host | Location |
 |---|---|
-| Devin | `~/.config/devin/skills/vinardock` |
-| Claude Code | `~/.claude/skills/vinardock` or `<project>/.claude/skills/vinardock` |
-| Codex / generic | `~/.agents/skills/vinardock` or `<project>/.agents/skills/vinardock` |
-| Cursor | `<project>/.cursor/skills/vinardock` |
+| Devin | `~/.config/devin/skills/vinardock-skill` |
+| Claude Code | `~/.claude/skills/vinardock-skill` or `<project>/.claude/skills/vinardock-skill` |
+| Codex / generic | `~/.agents/skills/vinardock-skill` or `<project>/.agents/skills/vinardock-skill` |
+| Cursor | `<project>/.cursor/skills/vinardock-skill` |
 
 On a single machine, a symlink keeps one source of truth:
 
 ```bash
-ln -s /path/to/vinardock ~/.claude/skills/vinardock
+ln -s /path/to/vinardock-skill ~/.claude/skills/vinardock-skill
 ```
 
 This skill-directory placement is the only thing that lives outside the

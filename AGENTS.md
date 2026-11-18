@@ -1,4 +1,4 @@
-# docking skill
+# vinardock-skill
 
 Vinardock docking pipeline (prepare → dock → analyse) packaged as an
 agent skill. No build step; scripts are plain Python 3 stdlib. Requires

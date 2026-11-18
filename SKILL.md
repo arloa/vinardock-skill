@@ -1,5 +1,5 @@
 ---
-name: vinardock
+name: vinardock-skill
 description: Vinardock molecular docking pipeline (prepare → dock → analyse) with validated results
 argument-hint: "[receptor] [ligands|smiles] [options]"
 ---
