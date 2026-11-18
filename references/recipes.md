@@ -32,14 +32,16 @@ hub: four layers merged once into `config.txt` (the file vinardock runs):
 Relative path values in a `--config` file resolve against the config's
 own directory (write them as if running vinardock from there); on the
 command line they resolve against the caller's cwd. This matters
-because vinardock itself runs inside `dock/attempt-N/`.
+because vinardock itself runs inside `dock/attempts/attempt-N/`.
 
 Overriding a generated path key (`receptor`, `ligand`, `out`,
 `autobox_ligand`, `scoring*`, `rotamer_lib`) warns — it can desync
 prep/analysis (poses docked on a different receptor than the PLIP
 complex). All other overrides are silent, by design. `seed` is
 optional — vinardock defaults to a timestamp and the pipeline records
-the used seed in `metrics.seed`.
+the used seed in `metrics.seed`. `rotamer_lib` defaults to the bundled
+`param/dun2010bbdep.bin` because vinardock's own default is relative
+(`flexres/dun2010bbdep.bin`) and would resolve inside the attempt dir.
 
 `dock` runs without a prior `prepare` when the merged config supplies
 existing `receptor` and `ligand` paths (prepared `.pdbt`s); otherwise
@@ -48,21 +50,8 @@ it fails naming the fix. It requires a box — `center_x/y/z` +
 or a prepared `--autobox_ligand` path — and `out` must live inside
 the run dir.
 
-## Catalog (this repo)
+## Bundled recipes
 
-One line per file — the user-intent → recipe mapping lives in
-`interview.md`, each recipe's own `# description:` is canonical.
-
-- `standard.conf` — explicit `--docking_mode pso_mc` (vinardock's own
-  default; exists so runs record a named protocol)
-- `screening.conf` — `--vsmode` (virtual-screening swarm defaults)
-- `rescore.conf` — `--score_only`
-- `flexible.conf` — comment-only: names the intent and the gate; you
-  must pass `--flexres.res <spec>` or `--flexres.autoflex <Å>`
-- `mutation-dg.conf` — `--calc_mutate_dG`; you must pass
-  `--flexres.res <chain:OLDresNEW>` (e.g. `A:S63T`, `OLD != NEW`)
-
-Per-recipe constraints worth knowing: `flexible` fails without a
-`flexres.*` flag; `mutation-dg` needs one ligand + a real
-`chain:OLDresNEW` spec and fails closed when the mode doesn't engage;
-`rescore` needs an already-posed ligand inside the box.
+The bundled recipes live in `recipes/`; the user-intent → recipe
+mapping lives in `interview.md`, and each file's own `# description:`
+is canonical.

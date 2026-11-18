@@ -11,27 +11,29 @@ linux-amd64 static binaries.
   parser, log.csv/log parsing, PLIP XML matching, resume-skip logic,
   probe and installer selection logic.
 - `IntegrationTests` run the *real* binaries end-to-end when
-  `~/.local/share/vinardock-tools` is populated (skipped otherwise) and
-  assert actual output formats — log.csv headers, REMARK 980 lines, the
-  DOCK/ tree. Unit-test fixtures are fabricated, so any change to
-  parsing code should be confirmed against the integration test.
+  `.tools/plip-venv` exists (the dock half always runs; analyse is
+  skipped otherwise) and assert actual output formats — log.csv
+  headers, REMARK 980 lines, the DOCK/ tree. Unit-test fixtures are
+  fabricated, so any change to parsing code should be confirmed
+  against the integration test.
 
 ## Conventions
 
 - `scripts/pipeline.py` is the single entry point:
-  `prepare | dock | analyse` stages plus the `workflow` coordinator.
-  Shared helpers live once at the top of the file.
+  `prepare | dock | analyse` stages plus the `workflow` coordinator and
+  the `scan` HETATM helper. Shared helpers live once at the top of the
+  file.
 - `bin/` ships **fully static** builds of both executables —
   `obabel-vinardock` (Open Babel 3.1.1) and `vinardock` (built from
   `~/Calculos/Vinardock` with the Makefile flags minus
   `-march=native`, linked `-static`). Both: `ldd` → `not a dynamic
   executable`, no glibc or host-lib requirement; built for
-  ubuntu 22.04 but runs anywhere x86_64 Linux. `setup.py install`
-  defaults to them and `pipeline.py` prefers them over
-  `<tools_dir>/bin/`.
-- `scripts/setup.py install` copies from `bin/` and `param/` (or
-  explicit dirs) — there is no download path at all; the only network
-  step is provisioning the PLIP venv (`uv`).
+  ubuntu 22.04 but runs anywhere x86_64 Linux. They are used in place;
+  `pipeline.py` prefers them over `<tools_dir>/bin/`.
+- `scripts/setup.py install` writes only inside the repo: it
+  provisions the PLIP venv (and its uv cache) into `.tools/`, which is
+  gitignored. `bin/` and `param/` are used in place — nothing is
+  copied, and there is no download path except the PLIP packages.
 - **No hashing for verification.** status.json lists artifact *paths*
   only; resume checks are status + existence + timestamp staleness
   (a stage is stale when its predecessor finished after it started).
@@ -47,7 +49,8 @@ linux-amd64 static binaries.
   offered by `hetatm_groups` (scan / `--ligand_from_receptor`). It is a
   structural check, not a residue-name list — nothing to keep in sync.
 - `prepare` always reports the receptor's non-standard residues (every
-  residue but the 20 standard amino acids, ATOM or HETATM alike) as
+  residue but the standard amino acids — the 20 plus the histidine
+  tautomers HID/HIE/HIP — ATOM or HETATM alike) as
   `Receptor non-standard residues kept/dropped` warnings plus
   `metrics.residues_kept`/`residues_dropped` ({resname: count}).
 - `prepare` names prepared files after the input stem: receptor
@@ -64,6 +67,6 @@ linux-amd64 static binaries.
   error and ask the user before inspecting/fixing the file.
 - `probe` never silently drops a binary that exists but cannot launch —
   it reports it under `unusable` with the error.
-- Update `references/setup.md` and `references/gotchas.md` alongside any
-  change to probe/install behaviour; update `references/contract.md`
-  alongside any change to the status.json schema or run-dir layout.
+- Update `references/setup.md` alongside any change to probe/install
+  behaviour; update `references/contract.md` alongside any change to
+  the status.json schema, run-dir layout or invocation.

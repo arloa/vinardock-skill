@@ -44,18 +44,16 @@ question pass — scripts never ask questions.
    - The resolved box is scraped from vinardock's `Search box:` log line
      (autobox) or computed from the flags, recorded in `resolved_box`.
 4. **Run dir** — where results go.
-5. **conformations** — poses to write (default 9).
-6. **pose** — which conformer PLIP analyses (default 1 = best). Applies
-   to every ligand in batch runs.
-7. **seed** — offer a generated random seed; user may override or
-   omit (vinardock falls back to a timestamp, recorded in metrics).
-8. **threads** — default `nproc`. Note: batch VS parallelizes across
-   ligands only when `n_ligands >= threads`; smaller batches use inner
-   per-particle parallelism. PLIP runs in parallel across ligands.
-9. **recipe** — see table below. Confirm or let the user pick.
-10. **Recipe-specific flags** — whatever the chosen recipe still needs:
-    `flexres.res`/`flexres.autoflex` for flexible, the mutation spec for
-    mutation-dg.
+5. **Defaults** — unless the user says otherwise: conformations 9, pose 1
+   (the conformer PLIP analyses, applied to every ligand), seed from the
+   timestamp (recorded in `metrics.seed`), threads `nproc`. Batch VS
+   parallelizes across ligands only when `n_ligands >= threads`; PLIP
+   runs in parallel across ligands.
+6. **recipe** — see table below; config grammar and merge order are in
+   `references/recipes.md`. Confirm or let the user pick.
+7. **Recipe-specific flags** — whatever the chosen recipe still needs:
+   `flexres.res`/`flexres.autoflex` for flexible, the mutation spec for
+   mutation-dg.
 
 ## Recipe selection table (deterministic)
 
@@ -68,8 +66,8 @@ question pass — scripts never ask questions.
 | minimize, polish pose | `--minimize` flag on `standard` |
 | anything else / ambiguous | `standard` |
 
-No matching intent → `standard`, and list the catalog so the user can
-override. If multiple recipe intents are present (e.g. flexible + deep),
+No matching intent → `standard`, and list the options above so the user
+can override. If multiple recipe intents are present (e.g. flexible + deep),
 ask which protocol to use; do not silently
 pick one. A `.conf` path is also accepted (`--recipe <path>`).
 
@@ -86,21 +84,10 @@ rather than reporting an ordinary score as a ΔG.
 
 ## Flag rules
 
-- Vinardock config flags are passed verbatim on the same command line —
-  `--seed 7`, `--center_x 10`, `--autobox 4`, `--flexres.res A:S63T`,
-  `--swarm.extend_pso 10`. No wrapper, no `=` syntax (`--key value`
-  only, exactly as vinardock takes them). If a recipe needs a value you
-  don't have (a mutation spec, a flexres cutoff), ask the user — never
-  invent one.
-- `--prepare_autobox_ligand <file>` is a dedicated flag — dock resolves
-  the prepared `prep/<stem>_autobox.pdbt` itself. To use an already
-  prepared reference, pass `--autobox_ligand <file.pdbt>` directly.
-- An existing vinardock config file can be merged wholesale with
-  `--config <path>` (after the recipe, before CLI flags). If it
-  supplies `receptor`/`ligand` paths, `dock` can run without prepare;
-  the generated-path override warning explains the desync risk.
-- `--seed` is optional — vinardock falls back to a timestamp and the
-  used value is recorded in `metrics.seed`. `--threads`/`--conformations`
-  default to `nproc`/9 when unset.
+- Pass vinardock flags verbatim on the same command line (`--key value`
+  only — `--key=value` is rejected). If a recipe needs a value you don't
+  have, ask; never invent one.
+- `--prepare_autobox_ligand <file>` is prepared like a ligand; to use an
+  already-prepared reference, pass `--autobox_ligand <file.pdbt>`.
 - `--timeout <seconds>` bounds the vinardock run (default 21600 = 6h);
-  per-stage timeouts exist on the `prepare`/`analyse` subcommands too.
+  `prepare`/`analyse` have their own per-stage timeouts.

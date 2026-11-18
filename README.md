@@ -13,8 +13,8 @@ the agent needs to coordinate the run.
   downloads
 - Python ≥ 3.9 (stdlib only; no pip dependencies)
 - Network access is needed only to build the PLIP venv into
-  `~/.local/share/vinardock-tools` (or pass `--skip-plip` / a local
-  `--param` dir) — override per run with `--tools_dir`.
+  `<repo>/.tools` (or pass `--skip-plip`); everything else is bundled.
+  `--tools_dir` overrides the location per run.
 
 ## Install
 
@@ -33,35 +33,25 @@ On a single machine, a symlink keeps one source of truth:
 ln -s /path/to/vinardock ~/.claude/skills/vinardock
 ```
 
+This skill-directory placement is the only thing that lives outside the
+repo; `scripts/setup.py install` writes only to `<repo>/.tools/`
+(gitignored) and never touches your home directory or PATH.
+
 ## Usage
 
 Ask the agent to dock a receptor against one or more ligands (`.pdb`,
-`.sdf`, `.mol2`, `.pdbt`, or a `.smi` SMILES file). The skill interviews
-for inputs, search box (manual or autobox), recipe, seed and run
-directory, then runs `scripts/pipeline.py workflow`, which gates each
-stage on its `status.json` and writes `<run_dir>/report.md` — including
-the exact vinardock config and per-ligand interaction tables.
-Results are validated structurally (score vs. model energies, pose
-inside the search box, PLIP binding-site identity); warnings flag
-suspect results rather than stopping the run.
-
-Non-interactive agents: every interview answer maps to a `pipeline.py
-workflow` flag (`--prepare_receptor --prepare_ligand --recipe
---run_dir`, plus `--prepare_autobox_ligand`, `--drop_hetatm`,
-`--keep_metals`, `--pose`, `--timeout`); supply them all and no
-questions are asked. For redocking a known complex,
-`--ligand_from_receptor <RES[:CHAIN:SEQ]>` replaces `--prepare_ligand`.
-Vinardock's own flags (`--seed`, box coordinates, `autobox`,
-`flexres.*`, swarm/scoring options) are passed through verbatim on the
-same command line — precedence is CLI > `--config` > recipe > script
-defaults.
-Re-running the same command skips completed stages; `--force` reruns
-everything.
+`.sdf`, `.mol2`, `.pdbt`, or a `.smi` SMILES file). It interviews for
+inputs, box, recipe and run directory, then runs
+`scripts/pipeline.py workflow`, which gates each stage on its
+`status.json` and writes `<run_dir>/report.md`. Every interview answer
+maps to a flag, so a non-interactive agent can supply them all; see
+`SKILL.md` and `references/contract.md` for the invocation and the
+validation rules.
 
 ## Development
 
 - Tests: `python3 -m unittest discover -s tests` — the `IntegrationTests`
-  class runs the real binaries (when `~/.local/share/vinardock-tools` is
-  populated) and asserts their actual output formats.
+  class runs the real binaries (the dock half always; analyse when
+  `<repo>/.tools/plip-venv` exists) and asserts their actual output formats.
 - `AGENTS.md` documents repo conventions; `references/contract.md` is
   the stage interface.

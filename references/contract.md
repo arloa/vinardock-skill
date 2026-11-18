@@ -6,6 +6,21 @@ coordinator and the stages of `scripts/pipeline.py`
 in-process). Stages communicate only through the run-dir filesystem —
 each can also be invoked standalone.
 
+## Invocation
+
+```bash
+python3 <skill_dir>/scripts/pipeline.py workflow --run_dir <d> \
+    --prepare_receptor <f> --prepare_ligand <f> --recipe <n> [flags]
+```
+
+`--ligand_from_receptor <RES[:CHAIN:SEQ]>` replaces `--prepare_ligand`
+(run `scan <receptor>` to list candidates). Interview answers map to
+`--prepare_autobox_ligand`, `--drop_hetatm`, `--keep_metals`, `--pose`,
+`--threads`, `--timeout`. Any other `--flag value` goes to vinardock
+verbatim (`--key=value` is rejected), and `--config <path>` merges a
+whole vinardock config. Precedence: CLI > `--config` > recipe > script
+defaults.
+
 ## Run-dir layout
 
 ```
@@ -18,14 +33,15 @@ each can also be invoked standalone.
     prep.log                     # prepare's own log
   dock/
     status.json
-    attempt-<N>/                 # fresh dir per run — never reuses vinardock's
-      config.txt                 #   mtime cache. The fully merged config
-      vinardock.log              #   vinardock ran. N = next free counter.
-      DOCK/
-        <file>.pdbt                     # single-ligand runs (flat)
-        <2-char>/<stem>/<file>.pdbt     # batch runs (>1 ligand → VS mode)
-        <receptor>_modified.pdbt        # flex runs only
-        log.csv
+    attempts/
+      attempt-<N>/               # fresh dir per run — never reuses vinardock's
+        config.txt               #   mtime cache. The fully merged config
+        vinardock.log            #   vinardock ran. N = next free counter.
+        DOCK/
+          <file>.pdbt                     # single-ligand runs (flat)
+          <2-char>/<stem>/<file>.pdbt     # batch runs (>1 ligand → VS mode)
+          <receptor>_modified.pdbt        # flex runs only
+          log.csv
   analysis/
     status.json
     <name>_pose.pdbt / <name>_ligand.pdb / <name>_receptor.pdb
@@ -64,11 +80,14 @@ Exit codes (all subcommands): `0` = ok, `1` = stage/run failure
 
 **prepare** — `n_ligands`, `ligands` (sorted names), `receptor_chains`,
 `residues_kept` / `residues_dropped` ({resname: count} for every residue
-other than the 20 standard amino acids — what the user must be told was
-retained vs stripped; counts are distinct chain+resseq residues, ATOM
-and HETATM alike), `ligand_from_receptor`
+other than the standard amino acids — the 20 plus the histidine
+tautomers HID/HIE/HIP — what the user must be told was retained vs
+stripped; counts are distinct chain+resseq residues, ATOM and HETATM
+alike), `ligand_from_receptor`
 (stem of the extracted co-crystal ligand, or null), `receptor_file` /
-`autobox_file` (filenames in `prep/`).
+`autobox_file` (filenames in `prep/`). Blank-chain records are reported
+as chain `(blank)` — a reporting placeholder, not a real chain ID; never
+use it in flexres/mutation specs.
 
 **dock** — `recipe` (recipe name), `config` (`--config` file stem or
 null), `seed`, `threads`, `resolved_box`
@@ -97,7 +116,7 @@ hashing anywhere:
   `--force` re-runs everything.
 - After a stage runs, `status.json` must say `ok`. Otherwise stop and
   report `error` + the log tail (`prep/prep.log`, or the newest
-  `dock/attempt-*/vinardock.log`).
+  `dock/attempts/attempt-*/vinardock.log`).
 - A stage script may exit 0 with `status: "failed"` — trust the file.
   Conversely exit ≠0 without a status.json is a usage/crash error.
 - Changed inputs, recipe, config flags, or tools are **not** detected —
@@ -127,7 +146,9 @@ Corruption/bad output is caught by *structural* checks, not hashes:
 - analyse: PLIP runs per ligand; a ligand whose analysis fails is a
   warning, the stage fails only if *all* analyses fail. `report.md`
   is deleted before the stage runs so a stale report can never sit
-  next to a failed status.
+  next to a failed status. On flex runs the complex uses the
+  `<receptor>_modified.pdbt` output rather than the unmodified prep
+  receptor.
 - analyse XML: PLIP's XML must contain exactly one bindingsite
   matching the target ligand (hetid/chain/position) — PLIP's exit
   code is not trusted. The site lives under `bindingsites` with an
@@ -140,7 +161,9 @@ Corruption/bad output is caught by *structural* checks, not hashes:
   interactions; zero sites or no site matching the ligand = failed
   analysis.
 - Sanity warnings (never fatal): best score > 0, pose centroid outside
-  the resolved box, zero PLIP interactions for a ligand.
+  the resolved box, zero PLIP interactions for a ligand, and a receptor
+  whose records vinardock skipped for lacking the element column
+  (atom lines shorter than 79 characters).
 
 ## Partial failures
 
