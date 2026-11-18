@@ -1,7 +1,7 @@
 # Tool bootstrap: probe → ask → install
 
-Follow this when vinardock-skill.md step 1 routes here. Resolve `<skill_dir>` from the
-location of the invoked vinardock-skill.md; do not change the caller's working directory,
+Follow this when SKILL.md step 1 routes here. Resolve `<skill_dir>` from the
+location of the invoked SKILL.md; do not change the caller's working directory,
 as `probe` deliberately inspects that directory.
 
 Everything install writes stays inside the repo: `<skill_dir>/.tools/`
