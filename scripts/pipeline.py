@@ -21,7 +21,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = Path.home() / '.local/share/vinardock-tools'
+# install provisions only what cannot live in the repo (PLIP venv, receipt)
+TOOLS = ROOT / '.tools'
 # the repo ships fully static binaries — no install or host libs needed
 BUNDLED_OBABEL = ROOT / 'bin/obabel-vinardock'
 BUNDLED_VINARDOCK = ROOT / 'bin/vinardock'
@@ -34,7 +35,7 @@ PASSTHROUGH = re.compile(r'--([\w.]+)')
 # keys the pipeline generates as run-dir paths — an override can desync
 # preparation/analysis, so changing one always warns (never blocks)
 GENERATED = {'receptor', 'ligand', 'out', 'autobox_ligand',
-             'scoring', 'scoring.table', 'scoring.tableTxT'}
+             'scoring', 'scoring.table', 'scoring.tableTxT', 'rotamer_lib'}
 PATH_KEYS = {'receptor', 'ligand', 'out', 'autobox_ligand',
              'scoring.table', 'scoring.tableTxT', 'rotamer_lib'}
 SCORE_TOLERANCE = 0.05
@@ -187,9 +188,9 @@ def anchor_paths(flags, base):
 
 def merge_into(base, source, layer, warnings, guard=()):
     """Last-wins overlay (vinardock convention: cli precedes config). Warns
-    only where an override can desync the pipeline — a key in `guard` — or
-    where cli changes a recipe value. Overriding plain defaults (threads,
-    conformations, science params) is routine and quiet."""
+    only where an override can desync the pipeline — a key in `guard`.
+    Overriding plain defaults (threads, conformations, science params) is
+    routine and quiet."""
     for name, value in layer.items():
         if name in guard and name in base and base[name] != value:
             warnings.append(f'--{name} from {source} overrides {base[name]!r}')
@@ -223,6 +224,13 @@ def stage_done(root, stage):
         if started is None or finished is None or started < finished:
             return False
     return True
+
+
+def param_dir(tools):
+    """Bundled param/ wins over <tools_dir>/param, like the bundled binaries."""
+    bundled = ROOT / 'param'
+    return bundled if all((bundled / name).is_file() for name in PARAM_FILES) \
+        else tools / 'param'
 
 
 def log_tail(root, stage):
@@ -286,7 +294,10 @@ def planar_input(path):
             if line.startswith('@<TRIPOS>'):
                 break
             if line.strip():
-                z.append(float(line.split()[4]))
+                try:
+                    z.append(float(line.split()[4]))
+                except (IndexError, ValueError):
+                    raise ValueError('Mol2 atom line is malformed: ' + line.strip())
     else:
         return False
     return bool(z) and all(value == 0 for value in z)
@@ -450,7 +461,9 @@ def stage_prepare(run_dir, receptor, ligand, obabel_vinardock,
     stage.mkdir(parents=True, exist_ok=True)
     (stage / 'ligands').mkdir(exist_ok=True)
     log = stage / 'prep.log'
-    log.write_text('')  # per-run log, not an append-only history
+    # per-run log, not an append-only history; the header keeps it non-empty
+    # when every input is already .pdbt, so the stage stays resumable
+    log.write_text('# prepare\n')
     state = new_status('prepare')
     try:
         obabel = obabel_vinardock.resolve(strict=True)
@@ -581,7 +594,8 @@ def stage_prepare(run_dir, receptor, ligand, obabel_vinardock,
                             'autobox_file': ref_out.name if ref_out
                             else (extracted[0] + '_autobox.pdbt' if extracted else None)}
         state['status'] = 'ok'
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, RuntimeError, KeyError, IndexError,
+            subprocess.SubprocessError) as error:
         state['error'] = str(error)
         with log.open('a') as stream:
             stream.write('ERROR: ' + str(error) + '\n')
@@ -721,6 +735,16 @@ def check_score(name, csv_score, energies):
     return best
 
 
+def short_record_warning(log_text):
+    """vinardock silently skips atom records with no element column, so a
+    short-line receptor docks against an incomplete grid — surface it."""
+    match = re.search(r'skipped (\d+) ATOM/HETATM record\(s\) shorter than', log_text)
+    if not match:
+        return None
+    return (f'receptor: vinardock skipped {match.group(1)} atom record(s) shorter '
+            'than 79 columns — the prepared receptor may be incomplete')
+
+
 def resolve_box(preliminary, autobox_path):
     """Box center/size in Angstrom. Autobox: computed from the prepared
     reference's bounding box + pad (vinardock does not print the resolved
@@ -806,10 +830,11 @@ def stage_dock(run_dir, recipe=None, config=None, cli_flags=None,
         while (stage / 'attempts' / f'attempt-{number}').exists():
             number += 1
         attempt = stage / 'attempts' / f'attempt-{number}'
+        param = param_dir(tools)
         preliminary = OrderedDict({'out': str(attempt / 'DOCK'),
-                                   'scoring': '2vinardo', 'scoring.table': str(tools / 'param/param.dat'),
-                                   'scoring.tableTxT': str(tools / 'param/param.TxT.dat'),
-                                   'rotamer_lib': str(tools / 'param/dun2010bbdep.bin'),
+                                   'scoring': '2vinardo', 'scoring.table': str(param / 'param.dat'),
+                                   'scoring.tableTxT': str(param / 'param.TxT.dat'),
+                                   'rotamer_lib': str(param / 'dun2010bbdep.bin'),
                                    'threads': str(threads or os.cpu_count() or 1),
                                    'conformations': '9', 'calc_lig_rmsd': ''})
         prep_ligand_default = None
@@ -909,6 +934,9 @@ def stage_dock(run_dir, recipe=None, config=None, cli_flags=None,
         if not seed:
             match = re.search(r'Seed:\s*(\d+)', log_text)
             seed = match.group(1) if match else 'timestamp'
+        short = short_record_warning(log_text)
+        if short:
+            state['warnings'].append(short)
         csvpath = outdir / 'log.csv'
         if not csvpath.is_file():
             raise RuntimeError('vinardock did not write log.csv')
@@ -1119,7 +1147,8 @@ def stage_analyse(run_dir, pose=1, threads=1, tools_dir=TOOLS, timeout=600):
         if not dock or dock['status'] != 'ok':
             raise ValueError('dock/status.json is not ok')
         tools = tools_dir.expanduser().resolve()
-        obabel = tools / 'bin/obabel-vinardock'
+        obabel = BUNDLED_OBABEL if BUNDLED_OBABEL.is_file() \
+            else tools / 'bin/obabel-vinardock'
         plip = tools / 'plip-venv/bin/plip'
         if not obabel.is_file() or not plip.is_file():
             raise FileNotFoundError('obabel-vinardock or PLIP not installed')
@@ -1237,7 +1266,7 @@ def cmd_workflow(args, cli_flags):
     vinardock = BUNDLED_VINARDOCK if BUNDLED_VINARDOCK.is_file() else tools / 'bin/vinardock'
     missing = [str(p) for p in [vinardock, obabel,
                                 tools / 'plip-venv/bin/plip',
-                                *[tools / 'param' / f for f in PARAM_FILES]]
+                                *[param_dir(tools) / f for f in PARAM_FILES]]
                if not p.is_file()]
     recipe = read_recipe(args.recipe) if args.recipe else None
     if root.exists() and any(root.iterdir()) and not (root / 'prep/status.json').is_file():

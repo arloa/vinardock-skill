@@ -111,6 +111,9 @@ class PrepareHelperTests(unittest.TestCase):
                             '1 C1 5.0 6.0 0.0 C.2 1 LIG 0.0\n')
             with self.assertRaisesRegex(ValueError, 'one molecule'):
                 pipe.planar_input(mol2)
+            mol2.write_text('@<TRIPOS>MOLECULE\nlig\n@<TRIPOS>ATOM\n1 C1\n')
+            with self.assertRaisesRegex(ValueError, 'malformed'):
+                pipe.planar_input(mol2)
 
     def test_strip_source_remark(self):
         pipe = module('pipeline')
@@ -160,6 +163,46 @@ class PrepareHelperTests(unittest.TestCase):
                           state['warnings'])
             self.assertEqual(state['metrics']['residues_kept'], {'MSE': 1})
             self.assertEqual(state['metrics']['residues_dropped'], {'HOH': 1, 'LIG': 1})
+
+    def test_stage_prepare_pdbt_only_is_resumable(self):
+        # regression: a .pdbt-only run never invoked obabel, so prep.log was
+        # created empty and stage_done rejected it — the whole run re-docked
+        pipe = module('pipeline')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            obabel = root / 'obabel-vinardock'
+            obabel.write_text('#!/bin/sh\nexit 0\n')
+            obabel.chmod(0o755)
+            receptor = root / 'rec.pdbt'
+            receptor.write_text(atom(0, 0, 0) + '\n')
+            ligand = root / 'lig.pdbt'
+            ligand.write_text(atom(1, 1, 1, name='C1', resname='LIG') + '\nTORSDOF 1\n')
+            run = root / 'run'
+            self.assertEqual(pipe.stage_prepare(
+                run_dir=run, receptor=receptor, ligand=[ligand],
+                obabel_vinardock=obabel), 0)
+            self.assertTrue(pipe.stage_done(run, 'prepare'))
+
+    def test_stage_prepare_bad_mol2_fails_with_status(self):
+        # a malformed input is a stage failure with status.json, not an
+        # uncaught IndexError that skips the contract entirely
+        pipe = module('pipeline')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            obabel = root / 'obabel-vinardock'
+            obabel.write_text('#!/bin/sh\nexit 0\n')
+            obabel.chmod(0o755)
+            receptor = root / 'rec.pdbt'
+            receptor.write_text(atom(0, 0, 0) + '\n')
+            ligand = root / 'bad.mol2'
+            ligand.write_text('@<TRIPOS>MOLECULE\nlig\n@<TRIPOS>ATOM\n1 C1\n')
+            run = root / 'run'
+            self.assertEqual(pipe.stage_prepare(
+                run_dir=run, receptor=receptor, ligand=[ligand],
+                obabel_vinardock=obabel), 1)
+            state = json.loads((run / 'prep/status.json').read_text())
+            self.assertEqual(state['status'], 'failed')
+            self.assertIn('malformed', state['error'])
 
     def test_nonstandard_counts(self):
         pipe = module('pipeline')
@@ -293,6 +336,15 @@ class DockHelperTests(unittest.TestCase):
         self.assertFalse(pipe.mutation_spec('A:S63S'))   # same residue: not a mutation
         self.assertFalse(pipe.mutation_spec(''))         # missing spec
         self.assertFalse(pipe.mutation_spec('S63T'))     # missing chain
+
+    def test_short_record_warning(self):
+        pipe = module('pipeline')
+        log = ('[RECEPTOR] Warning: skipped 20 ATOM/HETATM record(s) shorter '
+               'than 79 chars (need element column at 78-79)\n')
+        warning = pipe.short_record_warning(log)
+        self.assertIn('skipped 20', warning)
+        self.assertIn('incomplete', warning)
+        self.assertIsNone(pipe.short_record_warning('[RECEPTOR] 20 atoms read\n'))
 
     def test_centroid_outside_box(self):
         pipe = module('pipeline')
@@ -607,6 +659,14 @@ class HelperTests(unittest.TestCase):
                         warnings, {'receptor'})
         self.assertEqual(len(warnings), 1)
 
+    def test_param_dir_prefers_bundled(self):
+        # bundled param/ wins like the bundled binaries; tools/param is fallback
+        pipe = module('pipeline')
+        self.assertEqual(pipe.param_dir(Path('/nonexistent')), ROOT / 'param')
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(pipe, 'ROOT', Path(temp)):
+                self.assertEqual(pipe.param_dir(Path('/custom')), Path('/custom/param'))
+
     def test_atom_xyz(self):
         pipe = module('pipeline')
         self.assertEqual(pipe.atom_xyz(atom(1.5, -2.0, 30.25)), (1.5, -2.0, 30.25))
@@ -667,18 +727,23 @@ class SetupTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'cannot run'):
                 setup.candidate(bad, 'obabel-vinardock')
 
-    def test_install_copy_requires_replace(self):
+    def test_tools_dir_is_repo_local(self):
+        # install writes only inside the repo; .tools/ is gitignored
+        setup = module('setup')
+        pipe = module('pipeline')
+        self.assertEqual(setup.TOOLS, ROOT / '.tools')
+        self.assertEqual(pipe.TOOLS, ROOT / '.tools')
+
+    def test_make_launcher_stays_in_tools(self):
         setup = module('setup')
         with tempfile.TemporaryDirectory() as temp:
-            source = Path(temp) / 'new'
-            target = Path(temp) / 'installed'
-            source.write_text('new')
-            target.write_text('old')
-            with self.assertRaises(FileExistsError):
-                setup.install_copy(source, target)
-            self.assertEqual(target.read_text(), 'old')
-            setup.install_copy(source, target, replace=True)
-            self.assertEqual(target.read_text(), 'new')
+            tools = Path(temp) / '.tools'
+            with patch.object(setup, 'TOOLS', tools):
+                result = setup.make_launcher()
+            target = tools / 'bin/vinardock-pipeline'
+            self.assertEqual(result['path'], str(target))
+            self.assertIn('pipeline.py', target.read_text())
+            self.assertTrue(os.access(target, os.X_OK))
 
     def test_probe_only_checks_pwd_path_and_tools(self):
         setup = module('setup')
@@ -725,15 +790,15 @@ class SetupTests(unittest.TestCase):
                 os.chdir(old)
 
 class IntegrationTests(unittest.TestCase):
-    """Run the real binaries end-to-end; skipped when the tools dir is absent.
+    """Run the real binaries end-to-end; skipped when bin/ is incomplete.
 
     Unlike the unit tests (which use fabricated fixtures) this asserts the
     *actual* output formats — the log.csv header, REMARK 980 lines, the DOCK/
     tree, and the vinardock log text — so a format drift in a real binary
     shows up here, not in production.
     """
-    TOOLS = Path.home() / '.local/share/vinardock-tools'
-    BIN = TOOLS / 'bin'
+    TOOLS = ROOT / '.tools'
+    BIN = ROOT / 'bin'
     VENV = TOOLS / 'plip-venv' / 'bin'
     PIPELINE = ROOT / 'scripts' / 'pipeline.py'
 

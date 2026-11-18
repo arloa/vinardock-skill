@@ -6,11 +6,11 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = Path.home() / '.local/share/vinardock-tools'
+# install provisions only what cannot live in the repo; .tools/ is gitignored
+TOOLS = ROOT / '.tools'
 PARAM_FILES = ('param.dat', 'param.TxT.dat', 'dun2010bbdep.bin')
 
 
@@ -54,126 +54,81 @@ def probe():
                        for directory in (ROOT / 'param', Path.cwd() / 'param', TOOLS / 'param')
                        if directory.is_dir() and all((directory / name).is_file() for name in PARAM_FILES)]
     result['plip'] = (TOOLS / 'plip-venv/bin/plip').is_file()
+    local = TOOLS / 'bin/vinardock-pipeline'
     found = shutil.which('vinardock-pipeline')
-    result['launcher'] = str(Path(found).resolve()) if found else None
+    result['launcher'] = str(Path(found).resolve()) if found else (
+        str(local) if local.is_file() else None)
     return result
 
 
-def launcher_dir():
-    """Where to link vinardock-pipeline: ~/.local/bin when on PATH, else
-    /usr/local/bin when writable, else ~/.local/bin with a PATH warning.
-    Arbitrary writable PATH dirs are never picked — a stray link in an
-    unrelated app's bin dir is worse than a PATH warning."""
-    local = Path.home() / '.local/bin'
-    dirs = {Path(d) for d in os.environ.get('PATH', '').split(os.pathsep) if d}
-    if local in dirs:
-        return local, None
-    system = Path('/usr/local/bin')
-    if system in dirs and os.access(system, os.W_OK):
-        return system, None
-    return local, str(local) + ' is not on PATH — add it or call the script by path'
-
-
-def make_launcher(replace=False):
-    """Write a wrapper that execs the install-time interpreter on
-    pipeline.py — a symlink would need pipeline.py itself to be
-    executable, which a fresh download does not guarantee."""
+def make_launcher():
+    """Write the wrapper into <tools>/bin — install never touches a PATH dir."""
     script = (ROOT / 'scripts/pipeline.py').resolve()
-    body = f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n'
-    found = shutil.which('vinardock-pipeline')
-    if found:
-        path = Path(found)
-        if (path.is_symlink() and path.resolve() == script) or \
-           (path.is_file() and not path.is_symlink()
-            and path.read_text(errors='replace') == body):
-            return {'path': found, 'note': 'already installed'}
-    directory, warning = launcher_dir()
-    target = directory / 'vinardock-pipeline'
-    if target.exists() or target.is_symlink():
-        if not replace:
-            raise FileExistsError(f'{target} exists; pass --replace to overwrite')
-        target.unlink()
-    directory.mkdir(parents=True, exist_ok=True)
-    target.write_text(body)
+    target = TOOLS / 'bin' / 'vinardock-pipeline'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
     target.chmod(0o755)
     result = {'path': str(target)}
+    found = shutil.which('vinardock-pipeline')
     if found and Path(found) != target:
         result['warning'] = f'{found} is earlier on PATH and will shadow this'
-    elif warning:
-        result['warning'] = warning
+    else:
+        result['note'] = f'add {target.parent} to PATH to use it'
     return result
-
-
-def install_copy(source, target, replace=False):
-    """Copy a file into the tools dir; refuses to clobber without --replace."""
-    if source.resolve() == target.resolve():
-        return
-    if target.exists() and not replace:
-        raise FileExistsError(f'{target} exists; pass --replace to overwrite')
-    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temp:
-        temp_path = Path(temp.name)
-        with source.open('rb') as inp:
-            shutil.copyfileobj(inp, temp)
-    temp_path.chmod(source.stat().st_mode & 0o777)
-    os.replace(temp_path, target)
 
 
 def install(args):
-    (TOOLS / 'bin').mkdir(parents=True, exist_ok=True)
-    (TOOLS / 'param').mkdir(parents=True, exist_ok=True)
+    TOOLS.mkdir(parents=True, exist_ok=True)
     summary = {}
-    receipt = TOOLS / 'install.json'
-    previous = json.loads(receipt.read_text()) if receipt.is_file() else {}
-    for name, selected in [('vinardock', args.vinardock),
-                           ('obabel-vinardock', args.obabel_vinardock)]:
-        target = TOOLS / 'bin' / name
-        source = Path(selected).expanduser().resolve()
-        if not candidate(source, name):
-            raise ValueError('not an executable: ' + str(source))
-        same = source == target.resolve()
-        install_copy(source, target, replace=args.replace)
-        origin = (previous.get(name, {}).get('source') or 'local ' + str(target)) if same \
-            else 'local ' + str(source)
-        summary[name] = candidate(target, name)
-        summary[name]['source'] = origin
-    param_dir = Path(args.param).expanduser().resolve()
+    for name in ('vinardock', 'obabel-vinardock'):
+        source = ROOT / 'bin' / name
+        item = candidate(source, name)
+        if not item:
+            raise ValueError('bundled binary missing or not executable: ' + str(source))
+        item['source'] = 'bundled ' + str(source)
+        summary[name] = item
+    summary['param'] = {}
     for name in PARAM_FILES:
-        source = param_dir / name
+        source = ROOT / 'param' / name
         if not source.is_file():
             raise FileNotFoundError(source)
-        install_copy(source, TOOLS / 'param' / name, replace=args.replace)
-        summary.setdefault('param', {})[name] = {'path': str(TOOLS / 'param' / name),
-                                                 'source': 'local ' + str(param_dir)}
+        summary['param'][name] = {'path': str(source),
+                                  'source': 'bundled ' + str(ROOT / 'param')}
     plip = TOOLS / 'plip-venv/bin/plip'
+    if args.replace and (TOOLS / 'plip-venv').exists():
+        shutil.rmtree(TOOLS / 'plip-venv')
     if not args.skip_plip and not plip.is_file():
         uv = shutil.which('uv')
         if not uv:
             raise RuntimeError('uv is required to provision PLIP')
-        subprocess.run([uv, 'venv', '--python', sys.executable, str(TOOLS / 'plip-venv')], check=True)
+        # the download cache stays in the repo too
+        env = dict(os.environ, UV_CACHE_DIR=str(TOOLS / 'cache/uv'))
+        subprocess.run([uv, 'venv', '--python', sys.executable, str(TOOLS / 'plip-venv')],
+                       check=True, env=env)
         subprocess.run([uv, 'pip', 'install', '--python', str(TOOLS / 'plip-venv/bin/python'),
-                        'plip==3.0.1', 'openbabel==3.2.1', 'numpy==2.2.6', 'lxml==6.1.3'], check=True)
+                        'plip==3.0.1', 'openbabel==3.2.1', 'numpy==2.2.6', 'lxml==6.1.3'],
+                       check=True, env=env)
     if plip.is_file():
         py = TOOLS / 'plip-venv/bin/python'
         info = subprocess.check_output([str(py), '-c',
             "import importlib.metadata as m; print(m.version('plip'), m.version('openbabel'))"], text=True).strip().split()
         summary['plip'] = {'path': str(plip),
                            'version': info[0], 'openbabel_bindings': info[1]}
-    # regenerate the checked-in help references so they always document the
-    # binaries actually installed
+    # regenerate the checked-in help references from the binaries in use
     refs = ROOT / 'references'
-    for name, command in [('vinardock-help.txt', [str(TOOLS / 'bin/vinardock'), '--help']),
-                          ('obabel-vinardock-help.txt', [str(TOOLS / 'bin/obabel-vinardock'), '-H'])]:
+    for name, command in [('vinardock-help.txt', [str(ROOT / 'bin/vinardock'), '--help']),
+                          ('obabel-vinardock-help.txt', [str(ROOT / 'bin/obabel-vinardock'), '-H'])]:
         output = subprocess.run(command, capture_output=True, text=True)
         text = output.stdout + output.stderr
         if name == 'vinardock-help.txt':
             text = re.sub(r'(--seed arg[^\n]*?\(default: )\d+(\))', r'\g<1><timestamp>\2', text)
         (refs / name).write_text(text)
     if args.launcher:
-        summary['launcher'] = make_launcher(replace=args.replace)
+        summary['launcher'] = make_launcher()
     elif sys.stdin.isatty():
-        directory, _ = launcher_dir()
-        if input(f'install vinardock-pipeline launcher in {directory}? [y/N] ').strip().lower() == 'y':
-            summary['launcher'] = make_launcher(replace=args.replace)
+        local = TOOLS / 'bin/vinardock-pipeline'
+        if input(f'install the vinardock-pipeline wrapper in {local.parent}? [y/N] ').strip().lower() == 'y':
+            summary['launcher'] = make_launcher()
     (TOOLS / 'install.json').write_text(json.dumps(summary, indent=2) + '\n')
     return summary
 
@@ -183,16 +138,11 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('probe')
     install_parser = sub.add_parser('install')
-    # the repo ships fully static builds in bin/ — no downloads or host libs
-    for name in ('vinardock', 'obabel-vinardock'):
-        install_parser.add_argument('--' + name, default=str(ROOT / 'bin' / name),
-                                    help='path to a ' + name + ' binary (default: bundled)')
-    install_parser.add_argument('--param', default=str(ROOT / 'param'),
-                                help='dir containing the param files (default: bundled)')
     install_parser.add_argument('--skip-plip', action='store_true')
     install_parser.add_argument('--launcher', action='store_true',
-                                help='symlink vinardock-pipeline into a PATH dir without asking')
-    install_parser.add_argument('--replace', action='store_true')
+                                help='write the vinardock-pipeline wrapper into <tools>/bin')
+    install_parser.add_argument('--replace', action='store_true',
+                                help='rebuild the PLIP venv')
     args = parser.parse_args()
     print(json.dumps(probe() if args.action == 'probe' else install(args), indent=2))
 
